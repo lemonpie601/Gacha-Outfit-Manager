@@ -23,6 +23,21 @@
     return { title, desc };
   }
 
+  function planWorldSelection(choice, activeIds, pickedIds, enabled) {
+    const original = Array.isArray(choice.ids) ? choice.ids : [];
+    const existing = [...new Set(original.filter(id => activeIds.has(id)))];
+    const used = new Set(existing), picked = [...new Set(pickedIds)].filter(id => activeIds.has(id));
+    const additions = picked.filter(id => !used.has(id));
+    const available = Math.max(0,64-existing.length);
+    const accepted = additions.slice(0,available);
+    const removed = new Set(picked);
+    const ids = enabled ? [...existing,...accepted] : existing.filter(id => !removed.has(id));
+    return {ids,available,done:enabled ? accepted.length : existing.length-ids.length,
+      already:enabled ? picked.length-additions.length : 0,
+      capacitySkipped:enabled ? additions.length-accepted.length : 0,
+      worldCount:ids.length,unchanged:JSON.stringify(original)===JSON.stringify(ids)};
+  }
+
   class Manager {
     constructor(adapter) {
       this.adapter = adapter;
@@ -235,19 +250,19 @@
         if (!run) throw new Error('적용할 세계를 선택하세요.');
         const choice = run.outfitThemes || { ids: [], order: 'cycle' };
         const activeIds = new Set(this.library.map(item => item.id));
-        // An explicit world selection edit replaces its obsolete references.
-        // Otherwise 64 disabled IDs would block even one newly selected theme.
-        const existing = (Array.isArray(choice.ids) ? choice.ids : []).filter(id => activeIds.has(id));
-        const picked = new Set(selected.map(item => item.id));
-        const ids = enabled ? [...new Set([...existing, ...picked])] : existing.filter(id => !picked.has(id));
-        if (ids.length > 64) throw new Error('한 세계에는 최대 64개 테마를 선택할 수 있습니다. 먼저 일부를 해제하세요.');
+        // Preserve current usable choices, and admit new IDs only into vacant slots.
+        const plan = planWorldSelection(choice,activeIds,selected.map(item => item.id),enabled);
+        const {ids} = plan;
+        if (ids.length > 64) throw new Error('세계에 저장된 선택이 64개를 넘습니다. 먼저 일부를 해제하세요.');
+        const result = {kind:'world',enabled,...plan,errors:[]};
+        if (plan.unchanged) return result;
         const next = clone(this.data);
         this.backup(next);
         await this.persist(next);
         const response = await this.request('/run/sources', { runId, sources: { outfitThemes: { ids, order: choice.order || 'cycle' } } });
         if (JSON.stringify(response.run?.outfitThemes?.ids) !== JSON.stringify(ids)) throw new Error('세계에 저장된 결과가 다릅니다. 새로고침 후 확인하세요.');
         await this.refresh();
-        return { done: selected.length, errors: [] };
+        return result;
       });
     }
     exportThemes(keys) {
@@ -256,5 +271,5 @@
     }
     exportBackup() { return clone(this.data.backup); }
   }
-  return { Manager, validateTheme, normalize };
+  return { Manager, validateTheme, normalize, planWorldSelection };
 });

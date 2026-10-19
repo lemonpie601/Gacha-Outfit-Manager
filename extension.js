@@ -44,7 +44,7 @@
         <div class="workspace">
           <aside class="sidebar"><p class="section-label">내 테마</p><div class="tabs" role="tablist" aria-label="테마 상태" aria-orientation="vertical"></div>
             <p class="section-label">테마 추가</p><div class="sidebar-actions"><button class="primary" data-act="new">+ 직접 만들기</button><button data-act="import">JSON 가져오기</button><button data-act="seed">추천 502개 추가</button></div>
-            <details><summary>세계에 적용하기</summary><div class="world"><label class="muted" for="gf-ot-world">적용할 세계</label><select id="gf-ot-world" aria-label="적용할 세계"></select><button data-act="world-on">체크한 테마 적용</button><button data-act="world-off">체크한 테마 해제</button><p class="muted note">활성 테마를 체크해서 적용하세요. 세계당 최대 64개이며, 0개면 게임이 테마를 자동 생성합니다.</p></div></details>
+            <details><summary>세계에 적용하기</summary><div class="world"><label class="muted" for="gf-ot-world">적용할 세계</label><select id="gf-ot-world" aria-label="적용할 세계"></select><p class="muted note world-capacity" style="white-space:pre-line"></p><button data-act="world-on">빈자리만큼 추가</button><button data-act="world-off">체크한 테마 해제</button><p class="muted note">기존 선택을 유지하고 체크한 순서대로 남은 자리만 채웁니다. 세계당 최대 64개이며, 0개면 게임이 테마를 자동 생성합니다.</p></div></details>
             <details><summary>내보내기 · 백업</summary><div class="files"><button data-act="export">테마 JSON 내보내기</button><p class="muted">체크하면 선택한 테마만, 체크가 없으면 전체를 저장합니다.</p><button data-act="backup">작업 전 백업 저장</button></div></details>
           </aside>
           <main class="library"><div class="tools"><input type="search" aria-label="제목 또는 설명 검색" placeholder="어떤 테마를 찾고 있나요?"><span class="counts"></span></div>
@@ -124,6 +124,12 @@
     if (!worldIds.has(worldId)) worldId = manager?.activeRunId || manager?.runs[0]?.runId || '';
     UI.setMarkup($('#gf-ot-world'), (manager?.runs || []).map(run => `<option value="${esc(run.runId)}"${run.runId === worldId ? ' selected' : ''}>${esc(run.name || run.runId)} · ${(run.outfitThemes?.ids || []).filter(id => activeIds.has(id)).length}/64</option>`).join('') || '<option value="">생성된 세계 없음</option>');
     const chosenWorld = manager?.runs.find(run => run.runId === worldId), used = new Set(chosenWorld?.outfitThemes?.ids || []);
+    const pickedIds = rows.filter(row => selected.has(row.key) && row.status === 'active').map(row => row.id);
+    const plan = Core.planWorldSelection(chosenWorld?.outfitThemes || {},activeIds,pickedIds,true);
+    const currentCount = new Set((chosenWorld?.outfitThemes?.ids || []).filter(id => activeIds.has(id))).size;
+    $('.world-capacity').textContent = chosenWorld
+      ? `현재 ${currentCount}/64개 · 남은 ${plan.available}자리` + (selected.size && pickedIds.length === selected.size ? `\n${plan.done}개 추가 예정${plan.already ? ' · 이미 적용 중 '+plan.already+'개' : ''}${plan.capacitySkipped ? ' · 초과 '+plan.capacitySkipped+'개 미적용' : ''}` : '')
+      : '적용할 세계를 선택하세요.';
     if (!shown.some(row => row.key === focusedKey)) focusedKey = shown[0]?.key || '';
     const badge = row => `<span class="tag">${labels[row.status]}</span>${row.status === 'active' && used.has(row.id) ? '<span class="tag">이 세계에 적용 중</span>' : ''}${row.pending ? '<span class="tag">복원 마무리 필요</span>' : ''}`;
     let listMarkup = shown.slice(0,limit).map(row => `<article class="card${focusedKey === row.key ? ' is-focused' : ''}"><input type="checkbox" data-key="${esc(row.key)}" aria-label="${esc(row.title)} 선택"><button class="inspect" data-inspect="${esc(row.key)}" aria-label="${esc(row.title)} 전체 설명"><span class="name"><strong>${esc(row.title)}</strong>${badge(row)}</span><span class="row-preview">${esc(row.desc)}</span></button></article>`).join('') || `<div class="empty"><h3>${search ? '검색 결과가 없습니다' : tab === 'trash' ? '휴지통이 비어 있습니다' : tab === 'active' ? '활성 테마가 없습니다' : '아직 테마가 없습니다'}</h3><p>${search ? '다른 검색어로 찾아보세요.' : tab === 'active' && counts.inactive ? '보관함에서 테마를 체크하고 활성화하세요.' : counts.all ? '전체 목록에서 다른 테마를 확인할 수 있습니다.' : '왼쪽의 추천 502개 추가 또는 JSON 가져오기로 시작하세요.'}</p>${counts.all && tab !== 'all' ? '<button data-act="goto-all">전체 목록 보기</button>' : ''}</div>`;
@@ -191,9 +197,10 @@
       if (disposed) return;
       selected.clear();
       if (result?.errors?.length) message(`${result.done}개 완료 · ${result.errors.length}개 실패${result.remaining ? ' · '+result.remaining+'개 미처리' : ''}\n` + result.errors.map(item => `${item.title}: ${item.message}`).join('\n'),true);
+      else if (result?.kind === 'world') message(UI.worldResultMessage(result));
       else if (result) message(`${result.done}개 처리 완료${result.skipped ? ` · 중복 ${result.skipped}개 건너뜀` : ''}.`);
       else message('목록을 새로 불러왔습니다.');
-      if (refreshHost && !result?.stopped) {
+      if (refreshHost && !result?.stopped && !result?.unchanged) {
         host?._refreshState?.();
         if (host?._showThemes) host._loadThemes?.();
       }

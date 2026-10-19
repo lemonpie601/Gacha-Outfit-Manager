@@ -35,6 +35,13 @@
     const query=String(search||'').trim().toLowerCase();
     return {counts,visible:rows.filter(row=>tab==='all'?row.status!=='trash':row.status===tab).filter(row=>!query||(row.title+' '+row.desc).toLowerCase().includes(query))};
   }
+  function worldResultMessage(result) {
+    const parts=[result.enabled ? `${result.done}개 추가` : `${result.done}개 해제`];
+    if(result.already) parts.push(`이미 적용 중 ${result.already}개`);
+    if(result.capacitySkipped) parts.push(`자리 부족으로 ${result.capacitySkipped}개는 추가하지 않음`);
+    parts.push(`현재 ${result.worldCount}/64개`);
+    return parts.join(' · ')+'.';
+  }
   const markupCache=new WeakMap();
   function setMarkup(element,markup) {
     if(markupCache.get(element)===markup) return false;
@@ -105,5 +112,5 @@
   function removeThemeButtons(scope) {
     if(scope) for(const element of scope.querySelectorAll('[data-gf-outfit-manager-slot], [data-gf-outfit-manager], [data-gf-outfit-manager-style]')) element.remove();
   }
-  return {isGachaVisible,summarize,mountThemeButtons,removeThemeButtons,placeOverlay,setMarkup,createRowsReader,isolateEvents,restoreFocus,trapTab};
+  return {isGachaVisible,summarize,worldResultMessage,mountThemeButtons,removeThemeButtons,placeOverlay,setMarkup,createRowsReader,isolateEvents,restoreFocus,trapTab};
 });

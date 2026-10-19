@@ -153,11 +153,36 @@ test('world selection changes preserve unrelated IDs and the rotation mode', asy
   assert.deepEqual(remote.runs[0].outfitThemes, { ids: ['b', 'a'], order: 'shuffle' });
 });
 
-test('world selection refuses overflow instead of silently keeping only the first 64', async () => {
+test('a full world preserves its existing themes and reports capacity skips without writes', async () => {
   const themes = Array.from({ length: 65 }, (_, i) => ({ id: `t${i}`, title: `Theme ${i}`, desc: 'Outfit.' }));
-  const { manager, calls } = await setup({ themes, runs: [{ runId: 'r1', outfitThemes: { ids: themes.slice(0,64).map(t => t.id), order: 'cycle' } }] });
-  await assert.rejects(manager.setWorld(['active:t64'], 'r1', true));
+  const { manager, calls, remote, writes } = await setup({ themes, runs: [{ runId: 'r1', outfitThemes: { ids: themes.slice(0,64).map(t => t.id), order: 'cycle' } }] });
+  const before=copy(remote.runs);const result=await manager.setWorld(['active:t64'], 'r1', true);
+  assert.equal(result.done,0);assert.equal(result.capacitySkipped,1);assert.equal(result.worldCount,64);assert.equal(result.unchanged,true);
+  assert.deepEqual(remote.runs,before);assert.equal(writes(),0);
   assert.equal(calls.filter(c => c[0] === '/run/sources').length, 0);
+});
+
+test('fills only vacant world slots in checked order and reports already-applied separately',async()=>{
+  const themes=Array.from({length:67},(_,i)=>({id:`t${i}`,title:`Theme ${i}`,desc:'Outfit.'}));
+  const existing=themes.slice(0,62).map(t=>t.id);
+  const {manager,remote,saved}=await setup({themes,runs:[{runId:'r1',outfitThemes:{ids:existing,order:'shuffle'}}]});
+  const result=await manager.setWorld(['active:t65','active:t0','active:t63','active:t66','active:t64'],'r1',true);
+  assert.deepEqual(remote.runs[0].outfitThemes,{ids:[...existing,'t65','t63'],order:'shuffle'});
+  assert.equal(result.done,2);assert.equal(result.already,1);assert.equal(result.capacitySkipped,2);assert.equal(result.worldCount,64);
+  assert.equal(manager.library.length,67);assert.deepEqual(saved().backup.worlds[0].outfitThemes.ids,existing);
+});
+
+test('oversized checked selection fills an empty world with 64 and keeps every library theme',async()=>{
+  const themes=Array.from({length:100},(_,i)=>({id:`t${i}`,title:`Theme ${i}`,desc:'Outfit.'}));
+  const {manager,remote}=await setup({themes,runs:[{runId:'r1',outfitThemes:{ids:[],order:'stop'}}]});
+  const result=await manager.setWorld(themes.map(t=>'active:'+t.id),'r1',true);
+  assert.equal(result.done,64);assert.equal(result.capacitySkipped,36);assert.equal(remote.themes.length,100);assert.equal(remote.runs[0].outfitThemes.order,'stop');
+});
+
+test('world removal reports actual removals and leaves other choices intact',async()=>{
+  const {manager,remote}=await setup({runs:[{runId:'r1',outfitThemes:{ids:['a'],order:'cycle'}}]});
+  const result=await manager.setWorld(['active:a','active:b'],'r1',false);
+  assert.equal(result.done,1);assert.equal(result.worldCount,0);assert.deepEqual(remote.runs[0].outfitThemes.ids,[]);
 });
 
 test('an archived world reference removed by the user is not resurrected', async () => {

@@ -18,6 +18,13 @@ test('hides controls under CSS-hidden ancestors including across shadow roots',(
 test('does not show controls in unrelated capability views or outside the viewport',()=>{ready();assert.equal(ui.isGachaVisible(element({getAttribute:()=> 'settings'}),view),false);assert.equal(ui.isGachaVisible(element({getBoundingClientRect:()=>({left:1500,top:0,right:1600,bottom:100,width:100,height:100})}),view),false);});
 test('counts and filters the same snapshot, with trash excluded from all',()=>{assert.equal(typeof ui.summarize,'function','Snapshot helpers are not implemented');const rows=[{key:'1',status:'active',title:'봄',desc:'Pink'},{key:'2',status:'inactive',title:'겨울',desc:'Snow'},{key:'3',status:'trash',title:'삭제',desc:'Old'}];const snapshot=ui.summarize(rows,'all','snow');assert.deepEqual(snapshot.counts,{active:1,inactive:1,all:2,trash:1});assert.deepEqual(snapshot.visible.map(row=>row.key),['2']);});
 
+test('world result distinguishes additions, already applied, and skipped for capacity',()=>{
+  assert.equal(typeof ui.worldResultMessage,'function');
+  const message=ui.worldResultMessage({enabled:true,done:2,already:1,capacitySkipped:3,worldCount:64});
+  assert.match(message,/2개 추가/);assert.match(message,/이미 적용 중 1개/);assert.match(message,/자리 부족.*3개/);assert.match(message,/64\/64/);
+  assert.match(ui.worldResultMessage({enabled:false,done:1,worldCount:2}),/1개 해제/);
+});
+
 function slots() {
   const matches=(child,selector)=>selector.split(',').some(part=>child.attrs[part.trim().slice(1,-1)]!==undefined);
   const create=tag=>({tag,attrs:{},children:[],events:{},setAttribute(k,v){this.attrs[k]=v;},addEventListener(k,fn){this.events[k]=fn;},appendChild(child){child.parent=this;this.children.push(child);},remove(){this.parent.children=this.parent.children.filter(child=>child!==this);},querySelector(selector){return this.querySelectorAll(selector)[0]||null;},querySelectorAll(selector){return this.children.flatMap(child=>[...(matches(child,selector)?[child]:[]),...child.querySelectorAll(selector)]);}});
