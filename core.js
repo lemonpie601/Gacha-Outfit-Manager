@@ -143,9 +143,14 @@
               this.library = clone(response.themes);
             }
             result.done++;
-          } catch (error) { result.errors.push({ title: row.title, message: error.message }); }
+          } catch (error) {
+            result.errors.push({ title: row.title, message: error.message });
+            if (error.code === 'RATE_LIMITED' || error.name === 'AbortError') {
+              result.stopped = true;result.remaining = selected.length - result.done - result.errors.length;break;
+            }
+          }
         }
-        await this.refresh();
+        if (!result.stopped) await this.refresh();
         return result;
       });
     }
@@ -171,25 +176,32 @@
               active = this.library.find(theme => fingerprint(theme) === fingerprint(row));
               if (!active) throw new Error('새 테마의 ID를 확인할 수 없습니다.');
             }
-            const pending = clone(this.data);
-            pending.records.find(item => item.key === row.key).restoreId = active.id;
-            await this.persist(pending);
-            const state = await this.request('/state');
-            for (const run of state.runs || []) {
-              const choice = run.outfitThemes || { ids: [], order: 'cycle' };
-              const ids = Array.isArray(choice.ids) ? choice.ids : [];
-              if (!ids.some(id => row.originalIds.includes(id))) continue;
-              const mapped = [...new Set(ids.map(id => row.originalIds.includes(id) ? active.id : id))];
-              const response = await this.request('/run/sources', { runId: run.runId, sources: { outfitThemes: { ids: mapped, order: choice.order || 'cycle' } } });
-              if (JSON.stringify(response.run?.outfitThemes?.ids) !== JSON.stringify(mapped)) throw new Error('세계의 테마 복원을 확인할 수 없습니다. 보관 사본으로 다시 시도할 수 있습니다.');
+            if (row.originalIds.length) {
+              const pending = clone(this.data);
+              pending.records.find(item => item.key === row.key).restoreId = active.id;
+              await this.persist(pending);
+              const state = await this.request('/state');
+              for (const run of state.runs || []) {
+                const choice = run.outfitThemes || { ids: [], order: 'cycle' };
+                const ids = Array.isArray(choice.ids) ? choice.ids : [];
+                if (!ids.some(id => row.originalIds.includes(id))) continue;
+                const mapped = [...new Set(ids.map(id => row.originalIds.includes(id) ? active.id : id))];
+                const response = await this.request('/run/sources', { runId: run.runId, sources: { outfitThemes: { ids: mapped, order: choice.order || 'cycle' } } });
+                if (JSON.stringify(response.run?.outfitThemes?.ids) !== JSON.stringify(mapped)) throw new Error('세계의 테마 복원을 확인할 수 없습니다. 보관 사본으로 다시 시도할 수 있습니다.');
+              }
             }
             const completed = clone(this.data);
             completed.records = completed.records.filter(item => item.key !== row.key);
             await this.persist(completed);
             result.done++;
-          } catch (error) { result.errors.push({ title: row.title, message: error.message }); }
+          } catch (error) {
+            result.errors.push({ title: row.title, message: error.message });
+            if (error.code === 'RATE_LIMITED' || error.name === 'AbortError') {
+              result.stopped = true;result.remaining = selected.length - result.done - result.errors.length;break;
+            }
+          }
         }
-        await this.refresh();
+        if (!result.stopped) await this.refresh();
         return result;
       });
     }

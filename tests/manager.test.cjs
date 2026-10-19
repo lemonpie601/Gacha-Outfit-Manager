@@ -24,6 +24,7 @@ async function setup({ themes = [first, second], runs, saved = {}, failDelete, f
       if (route === '/state') return { ok: true, runs: copy(remote.runs), activeRunId: 'r1' };
       if (route === '/theme/delete') {
         assert.ok(writes > 0, 'A recoverable copy must exist before any deletion');
+        if (typeof failDelete === 'function') failDelete(body.id);
         if (body.id === failDelete) return { ok: false, error: 'write-conflict' };
         remote.themes = remote.themes.filter(t => t.id !== body.id);
         return { ok: true, themes: copy(remote.themes), usage: {} };
@@ -44,7 +45,7 @@ async function setup({ themes = [first, second], runs, saved = {}, failDelete, f
     }
   });
   await manager.init();
-  return { manager, remote, calls, saved: () => copy(privateData) };
+  return { manager, remote, calls, saved: () => copy(privateData), writes:()=>writes };
 }
 
 test('imports the 502-theme collection without losing overflow or duplicating the active library', async () => {
@@ -61,6 +62,23 @@ test('invalid import is rejected atomically instead of silently truncating title
   const { manager } = await setup();
   await assert.rejects(manager.importThemes({ themes: [{ title: 'Good', desc: 'Valid' }, { title: 'x'.repeat(49), desc: 'Bad' }] }));
   assert.equal(manager.rows().length, 2);
+});
+
+test('activating newly imported themes avoids per-theme world reads and duplicate journal writes',async()=>{
+  const {manager,calls,saved,writes}=await setup();
+  await manager.importThemes([{title:'A',desc:'First'},{title:'B',desc:'Second'}]);
+  const keys=manager.rows().filter(row=>row.status==='inactive').map(row=>row.key);calls.length=0;const before=writes();
+  await manager.activate(keys);
+  assert.equal(calls.filter(([route])=>route==='/state').length,2,'only preflight and final refresh need world state');
+  assert.equal(saved().records.length,0);
+  assert.equal(writes()-before,3,'one backup and one completion write per new theme');
+});
+
+test('exhausted rate-limit retries stop a batch without hammering every remaining theme',async()=>{
+  const {manager,calls,saved}=await setup({failDelete:()=>{throw Object.assign(new Error('rate limited'),{code:'RATE_LIMITED'});}});
+  calls.length=0;const result=await manager.move(['active:a','active:b'],'inactive');
+  assert.equal(calls.filter(([route])=>route==='/theme/delete').length,1);
+  assert.equal(result.stopped,true);assert.equal(result.remaining,1);assert.equal(saved().records.length,2);
 });
 
 test('disabling deletes only selected live themes after a recoverable backup', async () => {

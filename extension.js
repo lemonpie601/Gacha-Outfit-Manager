@@ -3,17 +3,18 @@
   const KEY = '__gfOutfitManager';
   const Core = window.GachaOutfitManagerCore;
   const UI = window.GachaOutfitManagerUI;
+  const Transport = window.GachaOutfitManagerTransport;
   const seed = window.GachaOutfitManagerSeed;
   if (window[KEY]?.dispose) window[KEY].dispose();
   const api = typeof marinara !== 'undefined' ? marinara : null;
-  if (!Core || !UI || !api?.storage) throw new Error('의상 테마 관리 확장은 전체 페이지 접근 권한이 필요합니다. manifest.json이 포함된 최신 ZIP으로 가져오세요.');
+  if (!Core || !UI || !Transport || !api?.storage) throw new Error('의상 테마 관리 확장은 전체 페이지 접근 권한이 필요합니다. manifest.json이 포함된 최신 ZIP으로 가져오세요.');
 
   const node = document.createElement('div');
   node.id = 'gf-outfit-manager';
   node.style.cssText = 'position:fixed;inset:0;z-index:2147483000;pointer-events:none';
   const root = node.attachShadow({ mode: 'open' });
   let host = null, manager = null, busy = false, disposed = false;
-  const requests = new Set();
+  const lifetime = new AbortController();
   let tab = 'all', search = '', worldId = '', limit = 60, focusedKey = '';
   let scheduled = 0, wasVisible = false, watchedRoot = null;
   const selected = new Set();
@@ -155,32 +156,20 @@
     $('input[type=search]').disabled = busy;
     if (!busy && !$('.veil').hidden) UI.restoreFocus(root,$('input[type=search]'));
   }
-  async function request(route, body) {
-    if (disposed) throw new Error('확장이 비활성화되어 작업을 중단했습니다.');
-    const allowed = new Set(['/themes','/state','/theme/save','/theme/delete','/run/sources']);
-    if (!allowed.has(route)) throw new Error('지원되지 않는 테마 경로입니다.');
-    const headers = { Accept: 'application/json' };
-    // Use the same existing browser-session credential as the installed game.
-    // This value is only sent to these fixed same-origin Gacha Forge routes.
-    const admin = localStorage.getItem('marinara_admin_secret')?.trim();
-    if (admin) headers['X-Admin-Secret'] = admin;
-    const controller = new AbortController();
-    requests.add(controller);
-    const options = { credentials: 'same-origin', headers, signal: AbortSignal.any([AbortSignal.timeout(30000),controller.signal]) };
-    if (body !== undefined) { options.method = 'POST'; headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); }
-    const fetcher = typeof api.fetch === 'function' ? api.fetch.bind(api) : window.fetch.bind(window);
-    try {
-      const response = await fetcher('/api/gacha-forge' + route, options);
-      if (!response.ok) throw new Error(`가챠포지 연결 오류 (${response.status}). 관리자 접근 및 앱 실행 상태를 확인하세요.`);
-      return await response.json();
-    } finally { requests.delete(controller); }
-  }
+  const client = Transport.createClient({
+    fetch: typeof api.fetch === 'function' ? api.fetch.bind(api) : window.fetch.bind(window),
+    storage: api.storage,
+    signal: lifetime.signal,
+    getAdmin: () => { try { return localStorage.getItem('marinara_admin_secret')?.trim() || ''; } catch { return ''; } },
+    onWait: ms => { if (!disposed) message(`요청 제한으로 약 ${Math.ceil(ms/1000)}초 대기합니다. 창을 유지하면 자동으로 이어서 처리합니다.`); }
+  });
+  function request(route, body) { return client.request(route,body); }
   async function ensureManager() {
     if (manager) return manager;
     const next = new Core.Manager({
       request,
-      load: async () => (await api.storage.get())?.outfitManager || {},
-      save: async value => { if (disposed) throw new Error('확장이 비활성화되었습니다.'); await api.storage.patch({ outfitManager: value }); }
+      load: async () => (await client.load())?.outfitManager || {},
+      save: async value => { if (disposed) throw new Error('확장이 비활성화되었습니다.'); await client.save({ outfitManager: value }); }
     });
     await next.init();
     manager = next;
@@ -201,10 +190,10 @@
       const result = await work();
       if (disposed) return;
       selected.clear();
-      if (result?.errors?.length) message(`${result.done}개 완료 · ${result.errors.length}개 실패\n` + result.errors.map(item => `${item.title}: ${item.message}`).join('\n'),true);
+      if (result?.errors?.length) message(`${result.done}개 완료 · ${result.errors.length}개 실패${result.remaining ? ' · '+result.remaining+'개 미처리' : ''}\n` + result.errors.map(item => `${item.title}: ${item.message}`).join('\n'),true);
       else if (result) message(`${result.done}개 처리 완료${result.skipped ? ` · 중복 ${result.skipped}개 건너뜀` : ''}.`);
       else message('목록을 새로 불러왔습니다.');
-      if (refreshHost) {
+      if (refreshHost && !result?.stopped) {
         host?._refreshState?.();
         if (host?._showThemes) host._loadThemes?.();
       }
@@ -314,8 +303,7 @@
   const timer = setInterval(() => { if (document.visibilityState !== 'hidden') locate(); },4000);
   function dispose() {
     disposed = true;
-    for (const controller of requests) controller.abort();
-    requests.clear();
+    lifetime.abort();
     clearInterval(timer);
     if (scheduled) window.clearTimeout(scheduled);
     observer.disconnect();
